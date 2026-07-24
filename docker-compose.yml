@@ -1,0 +1,76 @@
+# =====================================================================
+#  Startar hela systemet:  docker compose up -d
+#
+#    db     – PostgreSQL med beständig lagring
+#    app    – API + webbapp (schemat migreras automatiskt vid start)
+#    caddy  – HTTPS-certifikat hämtas och förnyas automatiskt
+# =====================================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: villa_booking
+      POSTGRES_USER: villa
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD saknas i .env}
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8'
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U villa -d villa_booking']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Databasen exponeras aldrig mot internet – bara internt i nätverket.
+    expose:
+      - '5432'
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://villa:${DB_PASSWORD}@db:5432/villa_booking
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET saknas i .env}
+      APP_URL: https://${DOMAIN:?DOMAIN saknas i .env}
+      CORS_ORIGINS: https://${DOMAIN}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD saknas i .env}
+      ADMIN_NAME: ${ADMIN_NAME:-Administratör}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      BOOKING_TIMEZONE: ${BOOKING_TIMEZONE:-Europe/Stockholm}
+      # Utan dessa rader nådde värdena i .env aldrig fram till appen,
+      # trots att dokumentationen sa att reglerna ändras där.
+      BOOKING_OPEN: ${BOOKING_OPEN:-10:00}
+      BOOKING_CLOSE: ${BOOKING_CLOSE:-20:00}
+      BOOKING_DURATION_MINUTES: ${BOOKING_DURATION_MINUTES:-90}
+      BOOKING_HORIZON_DAYS: ${BOOKING_HORIZON_DAYS:-14}
+    expose:
+      - '5000'
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      DOMAIN: ${DOMAIN}
+      TLS_EMAIL: ${TLS_EMAIL:?TLS_EMAIL saknas i .env}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:
